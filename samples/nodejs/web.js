@@ -2,12 +2,173 @@ const express = require('express');
 const app = express();
 const bodyParser = require('body-parser');
 
+const shootingRange = 3;
+
 app.use(bodyParser.json());
 
+let manualCMD = '';
+let myDir = '';
+let nextDir = '';
+
+app.all('/*', function(req, res, next) {
+	res.header("Access-Control-Allow-Origin", "*");
+	res.header("Access-Control-Allow-Headers", "X-Requested-With");
+	res.header('Access-Control-Allow-Headers', 'Content-Type');
+	next();
+});
+
 app.post('/', function (req, res) {
-  console.log(req.body);
-  const moves = ['F', 'T', 'L', 'R'];
-  res.send(moves[Math.floor(Math.random() * moves.length)]);
+	if(manualCMD) {
+		res.send(manualCMD);
+		myDir = nextDir;
+		manualCMD = '';
+	} else {
+		res.send(findBestMove(req.body));
+		console.log(req.body)
+		myDir = req.body.arena.state[req.body._links.self.href].direction
+	}
+});
+
+app.post('/set', function (req, res) {
+	manualCMD = udlrToFLR(req.body.move)
+	console.log(req.body, myDir, manualCMD, nextDir);
+	res.send(`Saved ${manualCMD}`);
 });
 
 app.listen(process.env.PORT || 8080);
+
+function udlrToFLR(arrow) {
+	switch (myDir) {
+		case 'N':
+			switch (arrow) {
+				case 'U':
+					nextDir = 'N';
+					return 'F';
+				case 'D':
+				case 'R':
+					nextDir = 'E';
+					return 'R';
+				case 'L':
+					nextDir = 'W';
+					return 'L';
+			}
+			break;
+		case 'E':
+			switch (arrow) {
+				case 'R':
+					nextDir = 'E';
+					return 'F';
+				case 'L':
+				case 'D':
+					nextDir = 'S';
+					return 'R';
+				case 'U':
+					nextDir = 'N';
+					return 'L';
+			}
+			break;
+		case 'S':
+			switch (arrow) {
+				case 'D':
+					nextDir = 'S';
+					return 'F';
+				case 'L':
+				case 'U':
+					nextDir = 'W';
+					return 'R';
+				case 'R':
+					nextDir = 'E';
+					return 'L';
+			}
+			break;
+		case 'W':
+			switch (arrow) {
+				case 'L':
+					nextDir = 'W';
+					return 'F';
+				case 'U':
+				case 'R':
+					nextDir = 'N';
+					return 'R';
+				case 'D':
+					nextDir = 'S';
+					return 'L';
+			}
+			break;
+	}
+	return ''
+}
+
+function turnDirection(turn, curDir) {
+	switch(curDir) {
+		case 'N':
+			return turn=='R'?'E':(turn=='L'?'W':'N')
+		case 'E':
+			return turn=='R'?'S':(turn=='L'?'N':'E')
+		case 'S':
+			return turn=='R'?'W':(turn=='L'?'E':'S')
+		case 'W':
+			return turn=='R'?'N':(turn=='L'?'S':'W')
+	}
+	return curDir
+}
+
+function findBestMove(data) {
+	let myState = data.arena.state[data._links.self.href]
+	let closest = {
+		N: {y: 0},
+		S: {y: Number.MAX_SAFE_INTEGER},
+		W: {x: 0},
+		E: {x: Number.MAX_SAFE_INTEGER},
+	}
+
+	for(let p in data.arena.state) {
+		if(p==data._links.self.href) {
+			continue;
+		}
+		ps = data.arena.state[p]
+		ps.p = p
+		if(ps.x != myState.x && ps.y != myState.y) {
+			continue; // in diagonal
+		}
+
+		if(ps.x==myState.x && ps.y < myState.y && ps.y >= closest.N.y) {
+			ps.distance = myState.y - ps.y
+			closest.N = ps
+		}
+		else if(ps.x==myState.x && ps.y > myState.y && ps.y <= closest.S.y) {
+			ps.distance = ps.y - myState.y
+			closest.S = ps
+		}
+		else if(ps.y==myState.y && ps.x < myState.x && ps.x >= closest.W.x) {
+			ps.distance = myState.x - ps.x
+			closest.W = ps
+		}
+		else if(ps.y==myState.y && ps.x > myState.x && ps.x <= closest.E.x) {
+			ps.distance = ps.x - myState.x
+			closest.E = ps
+		}
+	}
+
+	let closestInFront = closest[myState.direction].distance
+	if(closestInFront){
+		if(closestInFront <= shootingRange) {
+			return 'T'
+		} else if (closestInFront == (shootingRange+1)) {
+			return 'F'
+		}
+	}
+
+	let closestInMyRight = closest[turnDirection('R', myState.direction)].distance
+	if(closestInMyRight && closestInMyRight <= shootingRange) {
+		return 'R'
+	}
+
+	let closestInMyLeft = closest[turnDirection('L', myState.direction)].distance
+	if(closestInMyLeft && closestInMyLeft <= shootingRange) {
+		return 'L'
+	}
+
+	return 'T' // by chance someone may appears in front form the sides or may enter in range. so keep shooting.
+}
+
